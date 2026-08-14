@@ -176,19 +176,11 @@ function createRequestHandler(targetUrl, middleware, logEnabled) {
       }
 
       try {
-        const targetResponse = await proxyToTarget(targetUrl, requestContext, responseContext);
-
-        responseContext.statusCode = targetResponse.statusCode;
-        responseContext.headers = { ...targetResponse.headers, ...responseContext.headers };
-        responseContext.body = targetResponse.body;
-
-        if (logEnabled) {
-          logOutgoingResponse(responseContext);
-        }
-
-        sendClientResponse(clientRes, responseContext);
+        await proxyToTarget(targetUrl, clientReq, clientRes, requestContext, responseContext, logEnabled);
       } catch (error) {
-        clientRes.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+        if (!clientRes.headersSent) {
+          clientRes.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+        }
         clientRes.end(`Proxy error: ${error.message}`);
       }
     });
@@ -274,7 +266,7 @@ function runMiddleware(req, res, middleware, done) {
   next();
 }
 
-function proxyToTarget(targetUrl, reqContext, resContext) {
+function proxyToTarget(targetUrl, clientReq, clientRes, reqContext, resContext, logEnabled) {
   return new Promise((resolve, reject) => {
     const targetPath = new URL(reqContext.url, targetUrl).href;
     const urlObject = new URL(targetPath);
@@ -285,7 +277,7 @@ function proxyToTarget(targetUrl, reqContext, resContext) {
     headers.host = urlObject.host;
 
     if (bodyBuffer.length > 0) {
-      headers['content-length'] = Buffer.byteLength(bodyBuffer);
+      headers['content-length'] = bodyBuffer.length;
     } else {
       delete headers['content-length'];
     }
@@ -300,19 +292,48 @@ function proxyToTarget(targetUrl, reqContext, resContext) {
     };
 
     const outbound = agent.request(requestOptions, (targetRes) => {
-      const responseChunks = [];
+      const responseHeaders = { ...targetRes.headers, ...resContext.headers };
 
-      targetRes.on('data', (chunk) => responseChunks.push(chunk));
-      targetRes.on('end', () => {
-        const body = Buffer.concat(responseChunks);
-        resolve({
-          statusCode: targetRes.statusCode,
-          headers: { ...targetRes.headers },
-          body,
+      if (resContext.body != null) {
+        const responseChunks = [];
+
+        targetRes.on('data', (chunk) => responseChunks.push(chunk));
+        targetRes.on('end', () => {
+          const body = Buffer.concat(responseChunks);
+          resContext.statusCode = targetRes.statusCode;
+          resContext.headers = responseHeaders;
+          resContext.body = body;
+
+          if (logEnabled) {
+            logOutgoingResponse(resContext);
+          }
+
+          sendClientResponse(clientRes, resContext);
+          resolve();
         });
-      });
 
+        targetRes.on('error', reject);
+        return;
+      }
+
+      if (logEnabled) {
+        logOutgoingResponse({
+          statusCode: targetRes.statusCode,
+          headers: responseHeaders,
+          body: null,
+        });
+      }
+
+      clientRes.writeHead(targetRes.statusCode, responseHeaders);
+      targetRes.pipe(clientRes);
+
+      targetRes.on('end', resolve);
       targetRes.on('error', reject);
+      clientRes.on('error', reject);
+      clientRes.on('close', () => {
+        outbound.destroy();
+        resolve();
+      });
     });
 
     outbound.on('error', reject);
