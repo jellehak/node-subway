@@ -4,8 +4,30 @@ import https from 'https';
 import { pathToFileURL } from 'url';
 import path from 'path';
 import fs from 'fs';
+import { parseArgs } from './parseArgs.js';
 
-const args = parseArgs(process.argv.slice(2));
+let args;
+try {
+  args = parseArgs(
+    process.argv.slice(2),
+    {
+      port: { alias: ['p'], type: 'number', default: 3000 },
+      target: { alias: ['t'], type: 'string' },
+      log: { alias: ['l'], type: 'boolean', default: false },
+      middleware: { type: 'string', multiple: true },
+    },
+    {
+      unknown: (arg) => {
+        printUsage(`Unknown argument: ${arg}`);
+        process.exit(1);
+        return false;
+      },
+    }
+  );
+} catch (error) {
+  printUsage(error.message);
+  process.exit(1);
+}
 
 if (!args.target) {
   printUsage('Missing required --target argument.');
@@ -20,66 +42,6 @@ server.listen(args.port, () => {
   console.log(`subway proxy listening on http://localhost:${args.port} -> ${targetUrl.href}`);
 });
 
-function parseArgs(argv) {
-  const result = {
-    port: 3000,
-    target: '',
-    log: false,
-    middleware: [],
-  };
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-
-    if (arg === '-t' || arg === '--target') {
-      result.target = argv[index + 1];
-      index += 1;
-      continue;
-    }
-
-    if (arg.startsWith('--target=')) {
-      result.target = arg.split('=')[1];
-      continue;
-    }
-
-    if (arg === '-p' || arg === '--port') {
-      result.port = Number(argv[index + 1]);
-      index += 1;
-      continue;
-    }
-
-    if (arg.startsWith('--port=')) {
-      result.port = Number(arg.split('=')[1]);
-      continue;
-    }
-
-    if (arg === '-l' || arg === '--log') {
-      result.log = true;
-      continue;
-    }
-
-    if (arg.startsWith('--log=')) {
-      result.log = arg.split('=')[1].toLowerCase() !== 'false';
-      continue;
-    }
-
-    if (arg === '--middleware') {
-      result.middleware.push(argv[index + 1]);
-      index += 1;
-      continue;
-    }
-
-    if (arg.startsWith('--middleware=')) {
-      result.middleware.push(arg.split('=')[1]);
-      continue;
-    }
-
-    printUsage(`Unknown argument: ${arg}`);
-    process.exit(1);
-  }
-
-  return result;
-}
 
 function printUsage(error) {
   if (error) {
