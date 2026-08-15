@@ -14,7 +14,7 @@ try {
       port: { alias: ['p'], type: 'number', default: 3000 },
       target: { alias: ['t'], type: 'string' },
       log: { alias: ['l'], type: 'boolean', default: false },
-      middleware: { type: 'string', multiple: true },
+      hooks: { alias: ['hook'], type: 'string', multiple: true },
     },
     {
       unknown: (arg) => {
@@ -35,8 +35,8 @@ if (!args.target) {
 }
 
 const targetUrl = parseTarget(args.target);
-const middleware = await loadMiddlewareModules(args.middleware);
-const server = http.createServer(createRequestHandler(targetUrl, middleware, args.log));
+const { requestHooks, responseHooks } = await loadHookModules(args.hooks);
+const server = http.createServer(createRequestHandler(targetUrl, args.log, { requestHooks, responseHooks }));
 
 server.listen(args.port, () => {
   console.log(`subway proxy listening on http://localhost:${args.port} -> ${targetUrl.href}`);
@@ -49,12 +49,12 @@ function printUsage(error) {
     console.error('');
   }
 
-  console.error('Usage: subway --target <url> [--port <port>] [--log] [--middleware <file>]...');
+  console.error('Usage: subway --target <url> [--port <port>] [--log] [--hooks <file>]...');
   console.error('Options:');
   console.error('  -t, --target      Target server URL for proxied requests');
   console.error('  -p, --port        Local port to listen on (default: 3000)');
   console.error('  -l, --log         Enable request/response logging');
-  console.error('  --middleware      Middleware module path (can be repeated)');
+  console.error('  --hooks           Hook module path (can be repeated)');
 }
 
 function parseTarget(rawTarget) {
@@ -70,8 +70,9 @@ function parseTarget(rawTarget) {
   }
 }
 
-async function loadMiddlewareModules(paths) {
-  const handlers = [];
+async function loadHookModules(paths) {
+  const requestHooks = [];
+  const responseHooks = [];
 
   for (const rawPath of paths) {
     if (!rawPath) {
@@ -80,36 +81,40 @@ async function loadMiddlewareModules(paths) {
 
     const resolvedPath = resolveModulePath(rawPath);
     if (!fs.existsSync(resolvedPath)) {
-      console.error(`Middleware file not found: ${resolvedPath}`);
+      console.error(`Hook file not found: ${resolvedPath}`);
       process.exit(1);
     }
 
     const imported = await import(pathToFileURL(resolvedPath).href);
     const exported = imported.default;
 
-    if (!exported) {
-      console.error(`Middleware file did not export a default value: ${resolvedPath}`);
+    if (!exported || typeof exported !== 'function') {
+      console.error(`Hook module must export a default function: ${resolvedPath}`);
       process.exit(1);
     }
 
-    if (Array.isArray(exported)) {
-      for (const middlewareFn of exported) {
-        verifyMiddlewareFunction(middlewareFn, resolvedPath);
-        handlers.push(middlewareFn);
-      }
-      continue;
-    }
+    const onRequest = (hookFn) => {
+      verifyHookFunction(hookFn, resolvedPath, 'onRequest');
+      requestHooks.push(hookFn);
+    };
 
-    verifyMiddlewareFunction(exported, resolvedPath);
-    handlers.push(exported);
+    const onResponse = (hookFn) => {
+      verifyHookFunction(hookFn, resolvedPath, 'onResponse');
+      responseHooks.push(hookFn);
+    };
+
+    await exported(onRequest, onResponse);
   }
 
-  return handlers;
+  return {
+    requestHooks,
+    responseHooks,
+  };
 }
 
-function verifyMiddlewareFunction(fn, sourcePath) {
+function verifyHookFunction(fn, sourcePath, hookName) {
   if (typeof fn !== 'function') {
-    console.error(`Middleware exported value must be a function or an array of functions: ${sourcePath}`);
+    console.error(`Hook callback passed to ${hookName} must be a function: ${sourcePath}`);
     process.exit(1);
   }
 }
@@ -121,31 +126,32 @@ function resolveModulePath(rawPath) {
   return path.resolve(process.cwd(), rawPath);
 }
 
-function createRequestHandler(targetUrl, middleware, logEnabled) {
+function createRequestHandler(targetUrl, logEnabled, hooks) {
   return async (clientReq, clientRes) => {
     const requestContext = await buildRequestContext(clientReq);
     const responseContext = createResponseContext();
+    const { requestHooks = [], responseHooks = [] } = hooks || {};
 
     if (logEnabled) {
       logIncomingRequest(requestContext);
     }
 
-    runMiddleware(requestContext, responseContext, middleware, async (middlewareError) => {
-      if (middlewareError) {
-        clientRes.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-        clientRes.end(`Middleware error: ${middlewareError.message}`);
-        return;
-      }
+    try {
+      await runRequestHooks(requestContext, responseContext, requestHooks);
+    } catch (error) {
+      clientRes.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+      clientRes.end(`Request hook error: ${error.message}`);
+      return;
+    }
 
-      try {
-        await proxyToTarget(targetUrl, clientReq, clientRes, requestContext, responseContext, logEnabled);
-      } catch (error) {
-        if (!clientRes.headersSent) {
-          clientRes.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
-        }
-        clientRes.end(`Proxy error: ${error.message}`);
+    try {
+      await proxyToTarget(targetUrl, clientReq, clientRes, requestContext, responseContext, logEnabled, responseHooks);
+    } catch (error) {
+      if (!clientRes.headersSent) {
+        clientRes.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
       }
-    });
+      clientRes.end(`Proxy error: ${error.message}`);
+    }
   };
 }
 
@@ -174,6 +180,7 @@ function buildRequestContext(clientReq) {
       resolve({
         method: clientReq.method,
         url: clientReq.url,
+        clientIp: clientReq.socket?.remoteAddress || 'unknown',
         headers: { ...clientReq.headers },
         rawBody,
         body: parsedBody,
@@ -197,38 +204,26 @@ function createResponseContext() {
     removeHeader(name) {
       delete headers[name.toLowerCase()];
     },
+    getHeaders() {
+      return { ...headers };
+    },
     locals: {},
   };
 }
 
-function runMiddleware(req, res, middleware, done) {
-  let index = 0;
-
-  function next(error) {
-    if (error) {
-      done(error);
-      return;
-    }
-
-    if (index >= middleware.length) {
-      done();
-      return;
-    }
-
-    const current = middleware[index];
-    index += 1;
-
-    try {
-      current(req, res, next);
-    } catch (error) {
-      done(error);
-    }
+async function runRequestHooks(req, res, hooks) {
+  for (const hook of hooks) {
+    await hook(req, res);
   }
-
-  next();
 }
 
-function proxyToTarget(targetUrl, clientReq, clientRes, reqContext, resContext, logEnabled) {
+async function runResponseHooks(req, res, hooks) {
+  for (const hook of hooks) {
+    await hook(req, res);
+  }
+}
+
+function proxyToTarget(targetUrl, clientReq, clientRes, reqContext, resContext, logEnabled, responseHooks) {
   return new Promise((resolve, reject) => {
     const targetPath = new URL(reqContext.url, targetUrl).href;
     const urlObject = new URL(targetPath);
@@ -255,19 +250,31 @@ function proxyToTarget(targetUrl, clientReq, clientRes, reqContext, resContext, 
 
     const outbound = agent.request(requestOptions, (targetRes) => {
       const responseHeaders = { ...targetRes.headers, ...resContext.headers };
+      const shouldBufferResponse = resContext.body != null || (responseHooks && responseHooks.length > 0);
 
-      if (resContext.body != null) {
+      if (shouldBufferResponse) {
         const responseChunks = [];
 
         targetRes.on('data', (chunk) => responseChunks.push(chunk));
-        targetRes.on('end', () => {
+        targetRes.on('end', async () => {
           const body = Buffer.concat(responseChunks);
           resContext.statusCode = targetRes.statusCode;
           resContext.headers = responseHeaders;
           resContext.body = body;
 
+          try {
+            if (responseHooks && responseHooks.length > 0) {
+              await runResponseHooks(reqContext, resContext, responseHooks);
+            }
+          } catch (hookError) {
+            clientRes.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+            clientRes.end(`Response hook error: ${hookError.message}`);
+            resolve();
+            return;
+          }
+
           if (logEnabled) {
-            logOutgoingResponse(resContext);
+            logOutgoingResponse(reqContext, resContext);
           }
 
           sendClientResponse(clientRes, resContext);
@@ -279,7 +286,7 @@ function proxyToTarget(targetUrl, clientReq, clientRes, reqContext, resContext, 
       }
 
       if (logEnabled) {
-        logOutgoingResponse({
+        logOutgoingResponse(reqContext, {
           statusCode: targetRes.statusCode,
           headers: responseHeaders,
           body: null,
@@ -340,27 +347,40 @@ function sendClientResponse(clientRes, responseContext) {
 }
 
 function logIncomingRequest(reqContext) {
-  console.log(`\n[proxy] Request: ${reqContext.method} ${reqContext.url}`);
-  console.log('[proxy] Request Headers:', JSON.stringify(reqContext.headers, null, 2));
+  const length = reqContext.rawBody?.length ?? 0;
+  const cyan = '\x1b[36m';
+  const green = '\x1b[32m';
+  const yellow = '\x1b[33m';
+  const magenta = '\x1b[35m';
+  const reset = '\x1b[0m';
 
-  if (reqContext.body != null) {
-    if (Buffer.isBuffer(reqContext.body)) {
-      console.log(`[proxy] Request Body (${reqContext.rawBody.length} bytes)`);
-    } else {
-      console.log('[proxy] Request Body:', reqContext.body);
-    }
-  }
+  console.log(
+    `${cyan}✨ [in]${reset} ${yellow}${reqContext.clientIp}${reset} ${green}${reqContext.method}${reset} ` +
+    `${magenta}${reqContext.url}${reset} ${yellow}${length}b${reset}`
+  );
 }
 
-function logOutgoingResponse(resContext) {
-  console.log(`\n[proxy] Response: ${resContext.statusCode}`);
-  console.log('[proxy] Response Headers:', JSON.stringify(resContext.headers, null, 2));
+function logOutgoingResponse(reqContext, resContext) {
+  const size = resContext.body != null
+    ? Buffer.isBuffer(resContext.body)
+      ? `${resContext.body.length}b`
+      : `${String(resContext.body).length}b`
+    : 'stream';
+  const green = '\x1b[32m';
+  const yellow = '\x1b[33m';
+  const red = '\x1b[31m';
+  const blue = '\x1b[34m';
+  const magenta = '\x1b[35m';
+  const reset = '\x1b[0m';
+  const statusColor = resContext.statusCode >= 500 ? red : resContext.statusCode >= 400 ? yellow : green;
+  const statusEmoji = resContext.statusCode >= 500
+    ? '💥'
+    : resContext.statusCode >= 400
+      ? '⚠️'
+      : '✅';
 
-  if (resContext.body != null) {
-    if (Buffer.isBuffer(resContext.body)) {
-      console.log(`[proxy] Response Body (${resContext.body.length} bytes)`);
-    } else {
-      console.log('[proxy] Response Body:', resContext.body);
-    }
-  }
+  console.log(
+    `${blue}🌈 [out]${reset} ${yellow}${reqContext.clientIp}${reset} ${statusColor}${statusEmoji} ${resContext.statusCode}${reset} ` +
+    `${magenta}${size}${reset}`
+  );
 }

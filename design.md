@@ -3,7 +3,7 @@ a simple nodejs server cli to proxy request over the network.
 # Features
 - Proxy HTTP requests to a specified target server (eg. http://192.168.1.1:8080).
 - Log incoming requests and responses for debugging purposes.
-- Support for middleware to modify requests and responses before they are sent to the target server.
+- Support for hooks to modify requests and responses before they are sent to the target server.
 
 # Arguments
 - `--target` or `-t`: The target server URL to which requests will be proxied. This argument is required.
@@ -15,42 +15,24 @@ a simple nodejs server cli to proxy request over the network.
 subway --target http://192.168.1.1:8080 --port 3000 --log
 ```
 
-# Middleware
-You can add middleware functions to modify requests and responses. Middleware functions receive the request and response objects, and can perform actions such as adding headers, modifying the request body, or logging information.
+# Hooks
+You can add hook modules to run code before the request is proxied and after the response is received.
+
 ```sh
-subway --target http://192.168.1.1:8080 --port 3000 --log --middleware ./myMiddleware.js
+subway --target http://192.168.1.1:8080 --port 3000 --log --hooks ./myHook.js
 ```
 
 ```js
-// myMiddleware.js
-export default function myMiddleware(req, res, next) {
-  // Add a custom header to the request
-  req.headers['X-Custom-Header'] = 'My Custom Header';
-  
-  // Log the request method and URL
-  console.log(`Request: ${req.method} ${req.url}`);
-  
-  // Call the next middleware function
-  next();
-}
-```
+// myHook.js
+export default (onRequest, onResponse) => {
+  onRequest((req, res) => {
+    req.headers['X-Custom-Header'] = 'My Custom Header';
+    console.log(`Request: ${req.method} ${req.url}`);
+  });
 
-Stacking middleware functions is also supported. You can specify multiple middleware files, and they will be executed in the order they are provided.
-```sh
-subway --target http://192.168.1.1:8080 --port 3000 --log --middleware ./myMiddleware1.js --middleware ./myMiddleware2.js
+  onResponse((req, res) => {
+    console.log(`Response: ${res.statusCode}`);
+  });
+};
 ```
-
-Or you can use a single middleware file that exports an array of middleware functions.
-```js
-// myMiddleware.js
-export default [
-  function middleware1(req, res, next) {
-    // Modify the request or response
-    next();
-  },
-  function middleware2(req, res, next) {        
-    // Modify the request or response
-    next();
-  }
-];
 ```
