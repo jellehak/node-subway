@@ -5,6 +5,8 @@ import { pathToFileURL } from 'url';
 import path from 'path';
 import fs from 'fs';
 import { parseArgs } from './parseArgs.js';
+import { logIncomingRequest, logOutgoingResponse } from './stations/log.js';
+import { logOutgoingResponse } from './stations/log.js';
 
 let args;
 try {
@@ -344,43 +346,4 @@ function sendClientResponse(clientRes, responseContext) {
 
   clientRes.writeHead(responseContext.statusCode, headers);
   clientRes.end(rawBody);
-}
-
-function logIncomingRequest(reqContext) {
-  const length = reqContext.rawBody?.length ?? 0;
-  const cyan = '\x1b[36m';
-  const green = '\x1b[32m';
-  const yellow = '\x1b[33m';
-  const magenta = '\x1b[35m';
-  const reset = '\x1b[0m';
-
-  console.log(
-    `${cyan}✨ [in]${reset} ${yellow}${reqContext.clientIp}${reset} ${green}${reqContext.method}${reset} ` +
-    `${magenta}${reqContext.url}${reset} ${yellow}${length}b${reset}`
-  );
-}
-
-function logOutgoingResponse(reqContext, resContext) {
-  const size = resContext.body != null
-    ? Buffer.isBuffer(resContext.body)
-      ? `${resContext.body.length}b`
-      : `${String(resContext.body).length}b`
-    : 'stream';
-  const green = '\x1b[32m';
-  const yellow = '\x1b[33m';
-  const red = '\x1b[31m';
-  const blue = '\x1b[34m';
-  const magenta = '\x1b[35m';
-  const reset = '\x1b[0m';
-  const statusColor = resContext.statusCode >= 500 ? red : resContext.statusCode >= 400 ? yellow : green;
-  const statusEmoji = resContext.statusCode >= 500
-    ? '💥'
-    : resContext.statusCode >= 400
-      ? '⚠️'
-      : '✅';
-
-  console.log(
-    `${blue}🌈 [out]${reset} ${yellow}${reqContext.clientIp}${reset} ${statusColor}${statusEmoji} ${resContext.statusCode}${reset} ` +
-    `${magenta}${size}${reset}`
-  );
 }

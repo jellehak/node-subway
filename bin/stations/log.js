@@ -1,55 +1,44 @@
-function logIncomingRequest(req) {
-  console.log(`\n[proxy] Request: ${req.method} ${req.originalUrl}`);
-  console.log('[proxy] Request Headers:', JSON.stringify(req.headers, null, 2));
+const COLOR = {
+  RESET: '\x1b[0m',
+  CYAN: '\x1b[36m',
+  GREEN: '\x1b[32m',
+  YELLOW: '\x1b[33m',
+  MAGENTA: '\x1b[35m',
+  RED: '\x1b[31m',
+  BLUE: '\x1b[34m',
+};
 
-  if (req.body != null) {
-    if (Buffer.isBuffer(req.body)) {
-      console.log(`[proxy] Request Body (${req.rawBody.length} bytes)`);
-    } else {
-      console.log('[proxy] Request Body:', req.body);
-    }
-  }
+export function logIncomingRequest(reqContext) {
+  const length = reqContext.rawBody?.length ?? 0;
+  const timestamp = new Date().toISOString();
+
+  console.log(
+    `${COLOR.CYAN}${timestamp}${COLOR.RESET} ${COLOR.CYAN}✨ [in]${COLOR.RESET} ` +
+    `${COLOR.YELLOW}${reqContext.clientIp}${COLOR.RESET} ${COLOR.GREEN}${reqContext.method}${COLOR.RESET} ` +
+    `${COLOR.MAGENTA}${reqContext.url}${COLOR.RESET} ${COLOR.YELLOW}${length}b${COLOR.RESET}`
+  );
 }
 
-function logOutgoingResponse(req, res) {
-  console.log(`\n[proxy] Response: ${res.statusCode}`);
-  console.log('[proxy] Response Headers:', JSON.stringify(res.getHeaders(), null, 2));
+export function logOutgoingResponse(reqContext, resContext) {
+  const size = resContext.body != null
+    ? Buffer.isBuffer(resContext.body)
+      ? `${resContext.body.length}b`
+      : `${String(resContext.body).length}b`
+    : 'stream';
+  const statusColor = resContext.statusCode >= 500 ? COLOR.RED : resContext.statusCode >= 400 ? COLOR.YELLOW : COLOR.GREEN;
+  const statusEmoji = resContext.statusCode >= 500
+    ? '💥'
+    : resContext.statusCode >= 400
+      ? '⚠️'
+      : '✅';
+  const timestamp = new Date().toISOString();
 
-  if (res.body != null) {
-    if (Buffer.isBuffer(res.body)) {``
-      console.log(`[proxy] Response Body (${res.body.length} bytes)`);
-    } else {
-      console.log('[proxy] Response Body:', res.body);
-    }
-  }
+  console.log(
+    `${COLOR.BLUE}${timestamp}${COLOR.RESET} ${COLOR.BLUE}🌈 [out]${COLOR.RESET} ` +
+    `${COLOR.YELLOW}${reqContext.clientIp}${COLOR.RESET} ${statusColor}${statusEmoji} ${resContext.statusCode}${COLOR.RESET} ` +
+    `${COLOR.MAGENTA}${size}${COLOR.RESET}`
+  );
 }
-
-// export default (req, res, next) => {
-//   const reqContext = {
-//     method: req.method,
-//     url: req.originalUrl,
-//     headers: req.headers,
-//     body: req.body,
-//     rawBody: req.rawBody,
-//   };
-
-//   logIncomingRequest(reqContext);
-
-//   const originalSend = res.send.bind(res);
-//   res.send = (body) => {
-//     const resContext = {
-//       statusCode: res.statusCode,
-//       headers: res.getHeaders(),
-//       body,
-//     };
-
-//     logOutgoingResponse(resContext);
-
-//     return originalSend(body);
-//   };
-
-//   next();
-// }
 
 export default (onRequest, onResponse) => {
   onRequest((req, res) => {
