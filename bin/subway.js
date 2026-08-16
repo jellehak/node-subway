@@ -2,13 +2,16 @@ import https from 'https';
 import http from 'http';
 import { logIncomingRequest, logOutgoingResponse } from './stations/log.js';
 
-export function createRequestHandler(targetUrl, logEnabled, hooks) {
-  return async (clientReq, clientRes) => {
+export function createRequestHandler(config) {
+  const { target, port, log } = config;
+  const requestHooks = [];
+  const responseHooks = [];
+
+  const handler = async (clientReq, clientRes) => {
     const requestContext = await buildRequestContext(clientReq);
     const responseContext = createResponseContext();
-    const { requestHooks = [], responseHooks = [] } = hooks || {};
 
-    if (logEnabled) {
+    if (log) {
       logIncomingRequest(requestContext);
     }
 
@@ -21,13 +24,33 @@ export function createRequestHandler(targetUrl, logEnabled, hooks) {
     }
 
     try {
-      await proxyToTarget(targetUrl, clientReq, clientRes, requestContext, responseContext, logEnabled, responseHooks);
+      await proxyToTarget(target, clientReq, clientRes, requestContext, responseContext, log, responseHooks);
     } catch (error) {
       if (!clientRes.headersSent) {
         clientRes.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
       }
       clientRes.end(`Proxy error: ${error.message}`);
     }
+  };
+
+  return {
+    hook(hookModule) {
+      const onRequest = (fn) => {
+        requestHooks.push(fn);
+      };
+      const onResponse = (fn) => {
+        responseHooks.push(fn);
+      };
+      hookModule(onRequest, onResponse);
+      return this;
+    },
+    listen() {
+      const server = http.createServer(handler);
+      server.listen(port, () => {
+        console.log(`subway proxy listening on http://localhost:${port} -> ${target}`);
+      });
+      return server;
+    },
   };
 }
 

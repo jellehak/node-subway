@@ -1,10 +1,8 @@
 #!/usr/bin/env node
-import http from 'http';
 import { pathToFileURL } from 'url';
 import path from 'path';
 import fs from 'fs';
 import { parseArgs } from './parseArgs.js';
-import { logIncomingRequest, logOutgoingResponse } from './stations/log.js';
 import { createRequestHandler } from './subway.js';
 
 export async function run(argv) {
@@ -37,12 +35,19 @@ export async function run(argv) {
   }
 
   const targetUrl = parseTarget(args.target);
-  const { requestHooks, responseHooks } = await loadHookModules(args.hooks);
-  const server = http.createServer(createRequestHandler(targetUrl, args.log, { requestHooks, responseHooks }));
+  const hookModules = await loadHookModules(args.hooks);
 
-  server.listen(args.port, () => {
-    console.log(`subway proxy listening on http://localhost:${args.port} -> ${targetUrl.href}`);
+  const app = createRequestHandler({
+    target: targetUrl.href,
+    port: args.port,
+    log: args.log,
   });
+
+  for (const hookModule of hookModules) {
+    app.hook(hookModule);
+  }
+
+  app.listen();
 }
 
 function printUsage(error) {
@@ -73,8 +78,7 @@ function parseTarget(rawTarget) {
 }
 
 async function loadHookModules(paths) {
-  const requestHooks = [];
-  const responseHooks = [];
+  const hookModules = [];
 
   for (const rawPath of paths) {
     if (!rawPath) {
@@ -95,30 +99,10 @@ async function loadHookModules(paths) {
       process.exit(1);
     }
 
-    const onRequest = (hookFn) => {
-      verifyHookFunction(hookFn, resolvedPath, 'onRequest');
-      requestHooks.push(hookFn);
-    };
-
-    const onResponse = (hookFn) => {
-      verifyHookFunction(hookFn, resolvedPath, 'onResponse');
-      responseHooks.push(hookFn);
-    };
-
-    await exported(onRequest, onResponse);
+    hookModules.push(exported);
   }
 
-  return {
-    requestHooks,
-    responseHooks,
-  };
-}
-
-function verifyHookFunction(fn, sourcePath, hookName) {
-  if (typeof fn !== 'function') {
-    console.error(`Hook callback passed to ${hookName} must be a function: ${sourcePath}`);
-    process.exit(1);
-  }
+  return hookModules;
 }
 
 function resolveModulePath(rawPath) {
