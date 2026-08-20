@@ -57,6 +57,9 @@ function printUsage(error) {
   }
 
   console.error('Usage: subway --target <url> [--port <port>] [--log] [--hooks <file>]...');
+  console.error('');
+  console.error('Example:');
+  console.error('  subway --target http://localhost:11434 -p 1234');
   console.error('Options:');
   console.error('  -t, --target      Target server URL for proxied requests');
   console.error('  -p, --port        Local port to listen on (default: 3000)');
