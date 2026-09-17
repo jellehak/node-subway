@@ -67,7 +67,7 @@ function initializeResult(definitions) {
 
   for (const def of Object.values(definitions)) {
     if (def.multiple) {
-      result[def.name] = [];
+      result[def.name] = def.default ? [...def.default] : [];
     } else if (def.default !== undefined) {
       result[def.name] = def.default;
     }

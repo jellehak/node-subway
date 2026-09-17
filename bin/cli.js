@@ -8,13 +8,17 @@ import { createRequestHandler } from './subway.js';
 export async function run(argv) {
   let args;
   try {
+    const configPath = getConfigPath(argv);
+    const config = loadConfig(configPath);
+
     args = parseArgs(
       argv,
       {
-        port: { alias: ['p'], type: 'number', default: 3000 },
-        target: { alias: ['t'], type: 'string' },
-        log: { alias: ['l'], type: 'boolean', default: false },
-        hooks: { alias: ['hook'], type: 'string', multiple: true },
+        config: { alias: ['c'], type: 'string' },
+        port: { alias: ['p'], type: 'number', default: config.port ?? 3000 },
+        target: { alias: ['t'], type: 'string', default: config.target },
+        log: { alias: ['l'], type: 'boolean', default: config.log ?? false },
+        hooks: { alias: ['hook'], type: 'string', multiple: true, default: config.hooks },
       },
       {
         unknown: (arg) => {
@@ -56,15 +60,74 @@ function printUsage(error) {
     console.error('');
   }
 
-  console.error('Usage: subway --target <url> [--port <port>] [--log] [--hooks <file>]...');
+  console.error('Usage: subway [--config <file>] [--target <url>] [--port <port>] [--log] [--hooks <file>]...');
   console.error('');
   console.error('Example:');
   console.error('  subway --target http://localhost:11434 -p 1234');
   console.error('Options:');
+  console.error('  -c, --config      Path to a JSON config file');
   console.error('  -t, --target      Target server URL for proxied requests');
   console.error('  -p, --port        Local port to listen on (default: 3000)');
   console.error('  -l, --log         Enable request/response logging');
   console.error('  --hooks           Hook module path (can be repeated)');
+}
+
+function getConfigPath(argv) {
+  const configArgs = parseArgs(argv, {
+    config: { alias: ['c'], type: 'string' },
+    port: { alias: ['p'], type: 'number' },
+    target: { alias: ['t'], type: 'string' },
+    log: { alias: ['l'], type: 'boolean' },
+    hooks: { alias: ['hook'], type: 'string', multiple: true },
+  });
+
+  return configArgs.config;
+}
+
+function loadConfig(rawPath) {
+  if (!rawPath) {
+    return {};
+  }
+
+  const configPath = path.resolve(process.cwd(), rawPath);
+  let config;
+
+  try {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  } catch (error) {
+    throw new Error(`Unable to read config file ${configPath}: ${error.message}`);
+  }
+
+  if (!config || Array.isArray(config) || typeof config !== 'object') {
+    throw new Error('Config file must contain a JSON object.');
+  }
+
+  const supported = new Set(['target', 'port', 'log', 'hooks']);
+  for (const key of Object.keys(config)) {
+    if (!supported.has(key)) {
+      throw new Error(`Unknown config option: ${key}`);
+    }
+  }
+
+  if (config.target !== undefined && typeof config.target !== 'string') {
+    throw new Error('Config option target must be a string.');
+  }
+  if (config.port !== undefined && (typeof config.port !== 'number' || !Number.isFinite(config.port))) {
+    throw new Error('Config option port must be a number.');
+  }
+  if (config.log !== undefined && typeof config.log !== 'boolean') {
+    throw new Error('Config option log must be a boolean.');
+  }
+  if (config.hooks !== undefined && (!Array.isArray(config.hooks) || config.hooks.some((hook) => typeof hook !== 'string'))) {
+    throw new Error('Config option hooks must be an array of strings.');
+  }
+
+  if (config.hooks) {
+    const configDirectory = path.dirname(configPath);
+    config.hooks = config.hooks.map((hook) => path.resolve(configDirectory, hook));
+  }
+
+  return config;
 }
 
 function parseTarget(rawTarget) {

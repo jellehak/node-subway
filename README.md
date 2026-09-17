@@ -20,8 +20,26 @@ npm install -g .
 subway --target http://192.168.1.1:8080 --port 3000 --log
 ```
 
+Or load options from a JSON config file:
+
+```json
+{
+  "target": "http://192.168.1.1:8080",
+  "port": 3000,
+  "log": true,
+  "hooks": ["./myHook.js"]
+}
+```
+
+```sh
+subway --config ./subway.json
+```
+
+Command-line options override config values. Hook paths in a config file are resolved relative to that file.
+
 ## Options
 
+- `--config`, `-c`  Path to a JSON config file
 - `--target`, `-t`  Target server URL to proxy requests to (required)
 - `--port`, `-p`    Port for the proxy server (default: `3000`)
 - `--log`, `-l`     Enable request/response logging
