@@ -15,6 +15,7 @@ export async function run(argv) {
       argv,
       {
         config: { alias: ['c'], type: 'string' },
+        host: { type: 'string', default: config.host ?? '0.0.0.0' },
         port: { alias: ['p'], type: 'number', default: config.port ?? 3000 },
         target: { alias: ['t'], type: 'string', default: config.target },
         log: { alias: ['l'], type: 'boolean', default: config.log ?? false },
@@ -43,6 +44,7 @@ export async function run(argv) {
 
   const app = createRequestHandler({
     target: targetUrl.href,
+    host: args.host,
     port: args.port,
     log: args.log,
   });
@@ -60,13 +62,14 @@ function printUsage(error) {
     console.error('');
   }
 
-  console.error('Usage: subway [--config <file>] [--target <url>] [--port <port>] [--log] [--hooks <file>]...');
+  console.error('Usage: subway [--config <file>] [--target <url>] [--host <host>] [--port <port>] [--log] [--hooks <file>]...');
   console.error('');
   console.error('Example:');
   console.error('  subway --target http://localhost:11434 -p 1234');
   console.error('Options:');
   console.error('  -c, --config      Path to a JSON config file');
   console.error('  -t, --target      Target server URL for proxied requests');
+  console.error('  --host            Host to listen on (default: 0.0.0.0)');
   console.error('  -p, --port        Local port to listen on (default: 3000)');
   console.error('  -l, --log         Enable request/response logging');
   console.error('  --hooks           Hook module path (can be repeated)');
@@ -75,6 +78,7 @@ function printUsage(error) {
 function getConfigPath(argv) {
   const configArgs = parseArgs(argv, {
     config: { alias: ['c'], type: 'string' },
+    host: { type: 'string' },
     port: { alias: ['p'], type: 'number' },
     target: { alias: ['t'], type: 'string' },
     log: { alias: ['l'], type: 'boolean' },
@@ -102,7 +106,7 @@ function loadConfig(rawPath) {
     throw new Error('Config file must contain a JSON object.');
   }
 
-  const supported = new Set(['target', 'port', 'log', 'hooks']);
+  const supported = new Set(['target', 'host', 'port', 'log', 'hooks']);
   for (const key of Object.keys(config)) {
     if (!supported.has(key)) {
       throw new Error(`Unknown config option: ${key}`);
@@ -111,6 +115,9 @@ function loadConfig(rawPath) {
 
   if (config.target !== undefined && typeof config.target !== 'string') {
     throw new Error('Config option target must be a string.');
+  }
+  if (config.host !== undefined && typeof config.host !== 'string') {
+    throw new Error('Config option host must be a string.');
   }
   if (config.port !== undefined && (typeof config.port !== 'number' || !Number.isFinite(config.port))) {
     throw new Error('Config option port must be a number.');

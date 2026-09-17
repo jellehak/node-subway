@@ -47,3 +47,5 @@ docker run --rm -p 8081:8081 node-subway \
   --target http://host.docker.internal:8080 \
   --port 8081
 ```
+
+Subway listens on `0.0.0.0` by default so published Docker ports are reachable. Use `--host` only when a different bind address is required.

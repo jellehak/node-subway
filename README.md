@@ -25,6 +25,7 @@ Or load options from a JSON config file:
 ```json
 {
   "target": "http://192.168.1.1:8080",
+  "host": "0.0.0.0",
   "port": 3000,
   "log": true,
   "hooks": ["./myHook.js"]
@@ -41,6 +42,7 @@ Command-line options override config values. Hook paths in a config file are res
 
 - `--config`, `-c`  Path to a JSON config file
 - `--target`, `-t`  Target server URL to proxy requests to (required)
+- `--host`          Host to listen on (default: `0.0.0.0`)
 - `--port`, `-p`    Port for the proxy server (default: `3000`)
 - `--log`, `-l`     Enable request/response logging
 - `--hooks`         Path to hook module (can be repeated)

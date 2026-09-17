@@ -3,7 +3,7 @@ import http from 'http';
 import { logIncomingRequest, logOutgoingResponse } from './stations/log.js';
 
 export function createRequestHandler(config) {
-  const { target, port, log } = config;
+  const { target, host = '0.0.0.0', port, log } = config;
   const requestHooks = [];
   const responseHooks = [];
 
@@ -46,8 +46,8 @@ export function createRequestHandler(config) {
     },
     listen() {
       const server = http.createServer(handler);
-      server.listen(port, () => {
-        console.log(`subway proxy listening on http://localhost:${port} -> ${target}`);
+      server.listen(port, host, () => {
+        console.log(`subway proxy listening on http://${host}:${port} -> ${target}`);
       });
       return server;
     },
